@@ -216,8 +216,9 @@ import { PostgresStore } from "@mastra/pg";
 
 // Validate tenant ID to prevent injection attacks
 const validateTenantId = (tenantId: string): string => {
-  if (!/^[a-zA-Z0-9_-]+$/.test(tenantId)) {
-    throw new Error("Invalid tenant ID: must contain only alphanumeric characters, hyphens, and underscores");
+  // Ensure ID starts with alphanumeric and contains only safe characters
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(tenantId)) {
+    throw new Error("Invalid tenant ID: must start with alphanumeric and contain only alphanumeric characters, hyphens, and underscores");
   }
   return tenantId;
 };
@@ -228,20 +229,25 @@ const getValidSchemaName = (tenantId: string): string => {
   // Replace hyphens with underscores for schema name
   const schemaName = `tenant_${validatedId.replace(/-/g, '_')}`;
   
-  // Ensure schema name doesn't start with pg_ (reserved by PostgreSQL)
-  if (schemaName.toLowerCase().startsWith('pg_')) {
-    throw new Error("Schema name cannot start with 'pg_' (reserved by PostgreSQL)");
+  // PostgreSQL reserved schema names
+  const reserved = ['pg_', 'information_schema', 'public'];
+  const lowerName = schemaName.toLowerCase();
+  
+  if (reserved.some(r => lowerName === r || lowerName.startsWith(r))) {
+    throw new Error(`Schema name conflicts with PostgreSQL reserved name: ${schemaName}`);
   }
   
   return schemaName;
 };
 
 // Separate database per tenant (strictest isolation)
-// Use a secure mapping system for connection strings
+// Example: Use a secure mapping system for connection strings
+// In production, replace this with dynamic lookup from a configuration service or database
 const TENANT_DB_CONFIG: Record<string, string> = {
   "tenant-abc": process.env.TENANT_ABC_DATABASE_URL!,
   "tenant-xyz": process.env.TENANT_XYZ_DATABASE_URL!,
-  // Add other tenants...
+  // In production: Load from config service, e.g.:
+  // const config = await configService.getTenantConfig(validatedId);
 };
 
 const getTenantStorage = (tenantId: string) => {
@@ -259,8 +265,12 @@ const getTenantStorage = (tenantId: string) => {
 };
 
 // Or use agent-level storage with shared database
+// Note: You must create the schema manually before using it
 export const getTenantAgent = (tenantId: string) => {
   const schemaName = getValidSchemaName(tenantId);
+  
+  // Ensure schema exists before using (run during tenant onboarding):
+  // await db.execute(`CREATE SCHEMA IF NOT EXISTS ${schemaName}`);
   
   return new Agent({
     id: `tenant-agent-${tenantId}`,
