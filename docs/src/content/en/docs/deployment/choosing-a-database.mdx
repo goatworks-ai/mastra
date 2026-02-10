@@ -1,0 +1,409 @@
+---
+title: "Choosing a Database | Deployment"
+description: Guide to selecting the right storage backend for your Mastra application based on your requirements and deployment environment.
+packages:
+  - "@mastra/core"
+  - "@mastra/pg"
+  - "@mastra/libsql"
+  - "@mastra/mongodb"
+---
+
+# Choosing a Database
+
+Mastra supports 23+ storage backends, each with different strengths. This guide helps you select the right database for your service based on your deployment environment, scale, and operational requirements.
+
+## Quick recommendations
+
+### Getting started
+
+**Use libSQL** for the fastest setup with zero infrastructure:
+
+```typescript
+import { LibSQLStore } from "@mastra/libsql";
+
+export const mastra = new Mastra({
+  storage: new LibSQLStore({
+    id: 'mastra-storage',
+    url: "file:./mastra.db",
+  }),
+});
+```
+
+**Why libSQL?**
+- No separate database server required
+- Works locally and in production with Turso
+- Supports all Mastra features
+- Simple file-based storage for development
+
+### Production services
+
+**Use PostgreSQL** for full-featured production deployments:
+
+```typescript
+import { PostgresStore } from "@mastra/pg";
+
+export const mastra = new Mastra({
+  storage: new PostgresStore({
+    id: 'mastra-storage',
+    connectionString: process.env.DATABASE_URL,
+  }),
+});
+```
+
+**Why PostgreSQL?**
+- Battle-tested reliability and ACID compliance
+- Built-in pgvector support for semantic search
+- Wide availability on cloud platforms (AWS RDS, GCP Cloud SQL, Supabase, Neon, etc.)
+- Rich ecosystem of tools and monitoring
+- Excellent performance for concurrent operations
+
+### High-scale applications
+
+**Use composite storage** to optimize different data types:
+
+```typescript
+import { MastraCompositeStore } from "@mastra/core/storage";
+import { MemoryPG, WorkflowsPG } from "@mastra/pg";
+import { ObservabilityStorageClickhouse } from "@mastra/clickhouse";
+
+export const mastra = new Mastra({
+  storage: new MastraCompositeStore({
+    id: "composite",
+    domains: {
+      memory: new MemoryPG({ connectionString: process.env.DATABASE_URL }),
+      workflows: new WorkflowsPG({ connectionString: process.env.DATABASE_URL }),
+      observability: new ObservabilityStorageClickhouse({
+        url: process.env.CLICKHOUSE_URL,
+        username: process.env.CLICKHOUSE_USERNAME,
+        password: process.env.CLICKHOUSE_PASSWORD,
+      }),
+    },
+  }),
+});
+```
+
+**Why composite?**
+- Route observability data to ClickHouse (optimized for high-volume analytics)
+- Keep operational data in PostgreSQL (optimized for transactions)
+- Prevent observability telemetry from overwhelming your primary database
+- Different performance characteristics for different workloads
+
+### Serverless environments
+
+**Platform-specific recommendations:**
+
+**Vercel/Next.js:**
+- [Neon](https://neon.tech) PostgreSQL (serverless, auto-scaling)
+- [Vercel Postgres](https://vercel.com/docs/storage/vercel-postgres) (PostgreSQL powered by Neon)
+- [Turso](https://turso.tech) libSQL (edge-replicated, low latency)
+
+**Cloudflare Workers:**
+- [Cloudflare D1](/reference/storage/cloudflare-d1) (serverless SQLite)
+- [Cloudflare Durable Objects](/reference/storage/cloudflare) (edge storage with strong consistency)
+
+**AWS Lambda:**
+- [DynamoDB](/reference/storage/dynamodb) (serverless, fully managed)
+- [Aurora Serverless](https://aws.amazon.com/rds/aurora/serverless/) PostgreSQL
+- [Upstash](/reference/storage/upstash) Redis (serverless, pay-per-request)
+
+## Selection criteria
+
+### Development experience
+
+| Database | Local setup | Studio compatibility | Migration tools |
+|----------|------------|---------------------|-----------------|
+| libSQL | ✅ Zero config | ✅ Excellent | ✅ Drizzle ORM |
+| PostgreSQL | ⚠️ Requires Docker | ✅ Excellent | ✅ Multiple options |
+| MongoDB | ⚠️ Requires Docker | ✅ Good | ✅ Native migrations |
+| Cloudflare D1 | ⚠️ Wrangler CLI | ⚠️ Limited | ⚠️ Manual |
+
+### Production characteristics
+
+| Database | Availability | Scaling | Multi-region | Cost model |
+|----------|-------------|---------|--------------|------------|
+| PostgreSQL (managed) | 99.95%+ | Vertical + read replicas | ✅ Most providers | Fixed + storage |
+| MongoDB Atlas | 99.995% | Horizontal sharding | ✅ Global clusters | Tiered pricing |
+| DynamoDB | 99.99% | Automatic | ✅ Global tables | Pay-per-request |
+| libSQL (Turso) | 99.9% | Edge replication | ✅ Global | Usage-based |
+
+### Feature support
+
+| Database | Transactions | Vector search | Full-text search | JSON queries |
+|----------|-------------|---------------|------------------|--------------|
+| PostgreSQL | ✅ ACID | ✅ pgvector | ✅ Built-in | ✅ jsonb |
+| MongoDB | ✅ Multi-doc | ✅ Atlas Search | ✅ Text indexes | ✅ Native |
+| libSQL | ✅ SQLite | ⚠️ Limited | ✅ FTS5 | ✅ json1 |
+| DynamoDB | ⚠️ Limited | ❌ | ⚠️ Query filters | ❌ |
+
+## Common scenarios
+
+### Scenario 1: Building a ChatGPT-style application
+
+**Requirements:**
+- Conversation history persistence
+- Thread management with titles
+- Working memory for user preferences
+- Semantic search over past conversations
+
+**Recommended setup:**
+
+```typescript
+import { PostgresStore, PgVector } from "@mastra/pg";
+
+const storage = new PostgresStore({
+  id: 'mastra-storage',
+  connectionString: process.env.DATABASE_URL,
+});
+
+const vectorDb = new PgVector({
+  connectionString: process.env.DATABASE_URL,
+});
+
+export const mastra = new Mastra({
+  storage,
+  memory: {
+    vectorDb,
+  },
+});
+```
+
+**Why this works:**
+- Single database for both storage and vectors (simplified operations)
+- pgvector for semantic recall
+- PostgreSQL's JSONB for flexible metadata
+- Native support for threads and working memory
+
+### Scenario 2: Internal tool with light traffic
+
+**Requirements:**
+- Simple deployment
+- Low operational overhead
+- Cost-effective
+- Occasional usage (< 1000 requests/day)
+
+**Recommended setup:**
+
+```typescript
+import { LibSQLStore } from "@mastra/libsql";
+
+export const mastra = new Mastra({
+  storage: new LibSQLStore({
+    id: 'mastra-storage',
+    url: process.env.TURSO_URL || "file:./mastra.db",
+    authToken: process.env.TURSO_TOKEN,
+  }),
+});
+```
+
+**Why this works:**
+- Zero database management
+- Start with local file, migrate to Turso when needed
+- Pay only for usage
+- Single binary deployment
+
+### Scenario 3: Multi-tenant SaaS with compliance requirements
+
+**Requirements:**
+- Tenant isolation
+- Audit logging
+- Geographic data residency
+- High availability
+
+**Recommended setup:**
+
+```typescript
+import { PostgresStore } from "@mastra/pg";
+
+// Validate tenant ID to prevent injection attacks
+const validateTenantId = (tenantId: string): string => {
+  // Ensure ID starts with alphanumeric and contains only safe characters
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(tenantId)) {
+    throw new Error("Invalid tenant ID: must start with alphanumeric and contain only alphanumeric characters, hyphens, and underscores");
+  }
+  return tenantId;
+};
+
+// Validate PostgreSQL schema name
+const getValidSchemaName = (tenantId: string): string => {
+  const validatedId = validateTenantId(tenantId);
+  // Replace hyphens with underscores for schema name
+  const schemaName = `tenant_${validatedId.replace(/-/g, '_')}`;
+  
+  // PostgreSQL reserved schema names
+  const reserved = ['pg_', 'information_schema', 'public'];
+  const lowerName = schemaName.toLowerCase();
+  
+  if (reserved.some(r => lowerName === r || lowerName.startsWith(r))) {
+    throw new Error(`Schema name conflicts with PostgreSQL reserved name: ${schemaName}`);
+  }
+  
+  return schemaName;
+};
+
+// Separate database per tenant (strictest isolation)
+// Example: Use a secure mapping system for connection strings
+// In production, replace this with dynamic lookup from a configuration service or database
+const TENANT_DB_CONFIG: Record<string, string> = {
+  "tenant-abc": process.env.TENANT_ABC_DATABASE_URL!,
+  "tenant-xyz": process.env.TENANT_XYZ_DATABASE_URL!,
+  // In production: Load from config service, e.g.:
+  // const config = await configService.getTenantConfig(validatedId);
+};
+
+const getTenantStorage = (tenantId: string) => {
+  const validatedId = validateTenantId(tenantId);
+  const connectionString = TENANT_DB_CONFIG[validatedId];
+  
+  if (!connectionString) {
+    throw new Error(`No database configured for tenant: ${validatedId}`);
+  }
+  
+  return new PostgresStore({
+    id: `tenant-${validatedId}`,
+    connectionString,
+  });
+};
+
+// Or use agent-level storage with shared database
+// Note: You must create the schema manually before using it
+export const getTenantAgent = (tenantId: string) => {
+  const schemaName = getValidSchemaName(tenantId);
+  
+  // Ensure schema exists before using (run during tenant onboarding):
+  // await db.execute(`CREATE SCHEMA IF NOT EXISTS ${schemaName}`);
+  
+  return new Agent({
+    id: `tenant-agent-${tenantId}`,
+    memory: new Memory({
+      storage: new PostgresStore({
+        id: `tenant-${tenantId}`,
+        connectionString: process.env.DATABASE_URL,
+        // Use schemas for isolation within single database
+        schema: schemaName,
+      }),
+    }),
+  });
+};
+```
+
+**Why this works:**
+- PostgreSQL row-level security for shared database
+- Schema-based or database-based isolation
+- Geographic distribution via read replicas
+- Comprehensive audit trail support
+
+### Scenario 4: High-throughput analytics application
+
+**Requirements:**
+- Process 100K+ agent interactions daily
+- Real-time observability and tracing
+- Long-term metric retention
+- Cost-effective at scale
+
+**Recommended setup:**
+
+```typescript
+import { MastraCompositeStore } from "@mastra/core/storage";
+import { MemoryPG, WorkflowsPG, ScoresPG } from "@mastra/pg";
+import { ObservabilityStorageClickhouse } from "@mastra/clickhouse";
+
+export const mastra = new Mastra({
+  storage: new MastraCompositeStore({
+    id: "composite",
+    domains: {
+      memory: new MemoryPG({ connectionString: process.env.DATABASE_URL }),
+      workflows: new WorkflowsPG({ connectionString: process.env.DATABASE_URL }),
+      scores: new ScoresPG({ connectionString: process.env.DATABASE_URL }),
+      observability: new ObservabilityStorageClickhouse({
+        url: process.env.CLICKHOUSE_URL,
+        username: process.env.CLICKHOUSE_USERNAME,
+        password: process.env.CLICKHOUSE_PASSWORD,
+      }),
+    },
+  }),
+});
+```
+
+**Why this works:**
+- ClickHouse optimized for high-volume telemetry (100K+ spans/day)
+- PostgreSQL for transactional data (memory, workflows)
+- Separate scaling characteristics
+- Cost-effective storage for time-series data
+
+## Migration paths
+
+### From libSQL to PostgreSQL
+
+When your application outgrows local storage:
+
+1. Export data from libSQL
+2. Set up PostgreSQL with connection pooling
+3. Switch storage adapter
+4. Import historical data
+
+```typescript
+// Before (libSQL)
+const oldStorage = new LibSQLStore({ url: "file:./mastra.db" });
+
+// After (PostgreSQL)
+const newStorage = new PostgresStore({
+  connectionString: process.env.DATABASE_URL,
+  pool: {
+    max: 20,
+    idleTimeoutMillis: 30000,
+  },
+});
+```
+
+### From single to composite storage
+
+When you need specialized storage for high-volume data:
+
+```typescript
+// Before (single storage)
+const storage = new PostgresStore({
+  connectionString: process.env.DATABASE_URL,
+});
+
+// After (composite with ClickHouse for observability)
+const storage = new MastraCompositeStore({
+  id: "composite",
+  default: new PostgresStore({
+    connectionString: process.env.DATABASE_URL,
+  }),
+  domains: {
+    observability: new ObservabilityStorageClickhouse({
+      url: process.env.CLICKHOUSE_URL,
+      username: process.env.CLICKHOUSE_USERNAME,
+      password: process.env.CLICKHOUSE_PASSWORD,
+    }),
+  },
+});
+```
+
+## Additional resources
+
+- [Storage overview](/docs/memory/storage) - General storage configuration
+- [Storage reference](/reference/storage/overview) - Core schema and tables
+- [Composite storage](/reference/storage/composite) - Multiple storage backends
+- [Semantic recall](/docs/memory/semantic-recall) - Vector database setup
+- [Vector databases](/docs/rag/vector-databases) - RAG vector storage options
+
+## Support matrix
+
+Mastra supports 23+ storage backends. The most commonly used options include:
+
+| Provider | Package | Use case |
+|----------|---------|----------|
+| [libSQL](/reference/storage/libsql) | `@mastra/libsql` | Development, edge, low-traffic |
+| [PostgreSQL](/reference/storage/postgresql) | `@mastra/pg` | Production, full-featured |
+| [MongoDB](/reference/storage/mongodb) | `@mastra/mongodb` | Document-based, flexible schema |
+| [Microsoft SQL Server](/reference/storage/mssql) | `@mastra/mssql` | Enterprise, Windows stack |
+| [Upstash](/reference/storage/upstash) | `@mastra/upstash` | Serverless, Redis-based |
+| [DynamoDB](/reference/storage/dynamodb) | `@mastra/dynamodb` | AWS serverless |
+| [Convex](/reference/storage/convex) | `@mastra/convex` | Serverless backend platform |
+| [Cloudflare D1](/reference/storage/cloudflare-d1) | `@mastra/cloudflare-d1` | Edge, serverless SQL |
+| [Cloudflare Durable Objects](/reference/storage/cloudflare) | `@mastra/cloudflare` | Edge, strong consistency |
+| [LanceDB](/reference/storage/lance) | `@mastra/lance` | Embedded vector database |
+
+Additional supported backends include Astra, Chroma, ClickHouse, Couchbase, DuckDB, Elasticsearch, OpenSearch, Pinecone, Qdrant, S3Vectors, Turbopuffer, and Cloudflare Vectorize. See the [storage reference documentation](/reference/storage/overview) for the complete list.
