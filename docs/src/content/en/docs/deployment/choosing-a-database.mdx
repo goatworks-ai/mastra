@@ -10,7 +10,7 @@ packages:
 
 # Choosing a Database
 
-Mastra supports 20+ storage backends, each with different strengths. This guide helps you select the right database for your service based on your deployment environment, scale, and operational requirements.
+Mastra supports 23+ storage backends, each with different strengths. This guide helps you select the right database for your service based on your deployment environment, scale, and operational requirements.
 
 ## Quick recommendations
 
@@ -214,24 +214,48 @@ export const mastra = new Mastra({
 ```typescript
 import { PostgresStore } from "@mastra/pg";
 
+// Validate tenant ID to prevent injection attacks
+const validateTenantId = (tenantId: string): string => {
+  if (!/^[a-zA-Z0-9_-]+$/.test(tenantId)) {
+    throw new Error("Invalid tenant ID: must contain only alphanumeric characters, hyphens, and underscores");
+  }
+  return tenantId;
+};
+
 // Separate database per tenant (strictest isolation)
+// Use a secure mapping system for connection strings
+const TENANT_DB_CONFIG: Record<string, string> = {
+  "tenant-abc": process.env.TENANT_ABC_DATABASE_URL!,
+  "tenant-xyz": process.env.TENANT_XYZ_DATABASE_URL!,
+  // Add other tenants...
+};
+
 const getTenantStorage = (tenantId: string) => {
+  const validatedId = validateTenantId(tenantId);
+  const connectionString = TENANT_DB_CONFIG[validatedId];
+  
+  if (!connectionString) {
+    throw new Error(`No database configured for tenant: ${validatedId}`);
+  }
+  
   return new PostgresStore({
-    id: `tenant-${tenantId}`,
-    connectionString: process.env[`TENANT_${tenantId}_DATABASE_URL`],
+    id: `tenant-${validatedId}`,
+    connectionString,
   });
 };
 
 // Or use agent-level storage with shared database
 export const getTenantAgent = (tenantId: string) => {
+  const validatedId = validateTenantId(tenantId);
+  
   return new Agent({
-    id: `tenant-agent-${tenantId}`,
+    id: `tenant-agent-${validatedId}`,
     memory: new Memory({
       storage: new PostgresStore({
-        id: `tenant-${tenantId}`,
+        id: `tenant-${validatedId}`,
         connectionString: process.env.DATABASE_URL,
         // Use schemas for isolation within single database
-        schema: `tenant_${tenantId}`,
+        schema: `tenant_${validatedId}`,
       }),
     }),
   });
