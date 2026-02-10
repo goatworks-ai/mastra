@@ -416,6 +416,11 @@ const sidebars = {
         },
         {
           type: 'doc',
+          id: 'deployment/choosing-a-database',
+          label: 'Choosing a Database',
+        },
+        {
+          type: 'doc',
           id: 'deployment/mastra-server',
           label: 'Mastra Server',
         },
