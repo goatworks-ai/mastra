@@ -222,6 +222,20 @@ const validateTenantId = (tenantId: string): string => {
   return tenantId;
 };
 
+// Validate PostgreSQL schema name
+const getValidSchemaName = (tenantId: string): string => {
+  const validatedId = validateTenantId(tenantId);
+  // Replace hyphens with underscores for schema name
+  const schemaName = `tenant_${validatedId.replace(/-/g, '_')}`;
+  
+  // Ensure schema name doesn't start with pg_ (reserved by PostgreSQL)
+  if (schemaName.toLowerCase().startsWith('pg_')) {
+    throw new Error("Schema name cannot start with 'pg_' (reserved by PostgreSQL)");
+  }
+  
+  return schemaName;
+};
+
 // Separate database per tenant (strictest isolation)
 // Use a secure mapping system for connection strings
 const TENANT_DB_CONFIG: Record<string, string> = {
@@ -246,16 +260,16 @@ const getTenantStorage = (tenantId: string) => {
 
 // Or use agent-level storage with shared database
 export const getTenantAgent = (tenantId: string) => {
-  const validatedId = validateTenantId(tenantId);
+  const schemaName = getValidSchemaName(tenantId);
   
   return new Agent({
-    id: `tenant-agent-${validatedId}`,
+    id: `tenant-agent-${tenantId}`,
     memory: new Memory({
       storage: new PostgresStore({
-        id: `tenant-${validatedId}`,
+        id: `tenant-${tenantId}`,
         connectionString: process.env.DATABASE_URL,
         // Use schemas for isolation within single database
-        schema: `tenant_${validatedId}`,
+        schema: schemaName,
       }),
     }),
   });
@@ -367,7 +381,7 @@ const storage = new MastraCompositeStore({
 
 ## Support matrix
 
-Full list of supported storage backends:
+Mastra supports 23+ storage backends. The most commonly used options include:
 
 | Provider | Package | Use case |
 |----------|---------|----------|
@@ -381,3 +395,5 @@ Full list of supported storage backends:
 | [Cloudflare D1](/reference/storage/cloudflare-d1) | `@mastra/cloudflare-d1` | Edge, serverless SQL |
 | [Cloudflare Durable Objects](/reference/storage/cloudflare) | `@mastra/cloudflare` | Edge, strong consistency |
 | [LanceDB](/reference/storage/lance) | `@mastra/lance` | Embedded vector database |
+
+Additional supported backends include Astra, Chroma, ClickHouse, Couchbase, DuckDB, Elasticsearch, OpenSearch, Pinecone, Qdrant, S3Vectors, Turbopuffer, and Cloudflare Vectorize. See the [storage reference documentation](/reference/storage/overview) for the complete list.
